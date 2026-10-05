@@ -4,6 +4,10 @@
 #include "shaders.h"
 #include "settings.h"
 #include "mods/climb.h"
+#ifdef WWHD_SDL_HOST
+#include "platform/screen_layout.h"
+namespace interp { int mode(); }
+#endif
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -342,9 +346,51 @@ std::vector<ComposeQuad> screen_quads(Screen& screen,VkExtent2D target,int& filt
   return quads;
  }
 #endif
+#ifdef WWHD_SDL_HOST
+ if(&screen==&R.tv&&layout::single_screen()) {
+  // one window for both pictures (platform/screen_layout.h): the large one, then the small one
+  // with a frame, then the view button
+  Surface* drc=R.drc.scan&&R.drc.scan->image?R.drc.scan.get():nullptr;
+  const auto f=layout::present_tv(float(target.width),float(target.height),float(screen.scan->extent.width),float(screen.scan->extent.height),
+                                  drc?float(drc->extent.width):0,drc?float(drc->extent.height):0);
+  auto picture=[&](Surface* image,bool linear,const layout::Rect& r,bool framed) {
+   if(r.empty()||!image)return;
+   if(framed) {
+    const float bw=std::max(1.0f,std::round(r.w/200.0f));
+    ComposeQuad frame;frame.solid=true;frame.color[3]=0.6f;frame.box={r.x-bw,r.y-bw,r.w+2*bw,r.h+2*bw};quads.push_back(frame);
+   }
+   ComposeQuad q;q.image=image;q.sourceLinear=linear;q.box={r.x,r.y,r.w,r.h};quads.push_back(q);
+  };
+  if(f.drc_on_top) {
+   picture(screen.scan.get(),screen.srgb.load(),f.tv,false);
+   picture(drc,R.drc.srgb.load(),f.drc,true);
+  } else {
+   picture(drc,R.drc.srgb.load(),f.drc,false);
+   picture(screen.scan.get(),screen.srgb.load(),f.tv,true);
+  }
+  if(!f.toggle.empty()) {
+   // the view button: a dark square with two light "screens"
+   const layout::Rect& t=f.toggle;
+   ComposeQuad b;b.solid=true;b.color[3]=0.45f;b.box={t.x,t.y,t.w,t.h};quads.push_back(b);
+   for(int i=0;i<2;i++) {
+    ComposeQuad s;s.solid=true;s.color[0]=s.color[1]=s.color[2]=0.9f;s.color[3]=0.8f;
+    s.box={t.x+t.w*(i?0.45f:0.15f),t.y+t.h*(i?0.45f:0.2f),t.w*0.4f,t.h*0.32f};quads.push_back(s);
+   }
+   if(layout::fps60()) {  // 60 fps chosen (long press): green dot while on, yellow while paused
+    const bool on=interp::mode()!=0;
+    ComposeQuad d;d.solid=true;d.color[0]=on?0.2f:0.95f;d.color[1]=on?0.85f:0.8f;d.color[2]=on?0.3f:0.15f;d.color[3]=0.95f;
+    d.box={t.x+t.w*0.72f,t.y+t.h*0.06f,t.w*0.22f,t.h*0.22f};quads.push_back(d);
+   }
+  }
+  return quads;
+ }
+#endif
  // SDL host: the picture scaled to fit (Codex's presentation)
  const auto rect=present_rect(screen.scan->extent,target,filter);
  ComposeQuad q;q.image=screen.scan.get();q.sourceLinear=screen.srgb.load();q.box={rect.x,rect.y,rect.width,rect.height};quads.push_back(q);
+#ifdef WWHD_SDL_HOST
+ if(&screen==&R.drc)layout::present_drc_window({rect.x,rect.y,rect.width,rect.height});
+#endif
  return quads;
 }
 

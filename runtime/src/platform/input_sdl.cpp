@@ -2,6 +2,7 @@
 #include "input_sdl.h"
 #include "keycodes.h"
 #include "mouse_sdl.h"
+#include "screen_layout.h"
 #include "../input.h"
 #include "../input_map.h"
 #include "../runtime.h"
@@ -252,9 +253,74 @@ static void finish_prompt(bool ok){
  if(g_prompt_window){SDL_StopTextInput(g_prompt_window);SDL_SetWindowTitle(g_prompt_window,g_previous_title.c_str());}
  release_keys();if(done)done(ok,std::move(text));
 }
+// GamePad touch screen: the left mouse button or a finger on the GamePad picture (the GamePad window,
+// or the picture in the single-screen window) touches it, and a drag keeps touching until it lifts.
+// The single-screen view button (touch screens) is handled here too.
+static bool g_mouse_touching=false,g_finger_touching=false;static SDL_FingerID g_touch_finger=0;
+// the single-screen view button: a tap cycles the views, a long press (0.6 s) switches 60 fps
+static bool g_toggle_mouse=false,g_toggle_finger=false;static SDL_FingerID g_toggle_id=0;static Uint64 g_toggle_down=0;
+static void toggle_released(){
+ // the choice only: platform/perf_hint.cpp switches interpolation where the phone keeps up
+ if(SDL_GetTicks()-g_toggle_down>=600)layout::set_fps60(!layout::fps60());
+ else layout::next_view();
+}
+// Some controllers (GameSir) also register a virtual touch screen and a keyboard with Android and
+// send touches and keys for their buttons (mapping modes of the maker's app). Touches only count
+// from touch devices that are not a connected controller.
+static bool controller_touch(SDL_TouchID id){
+#ifdef __ANDROID__
+ static std::map<SDL_TouchID,bool> known;
+ if(auto it=known.find(id);it!=known.end())return it->second;
+ const char* name=SDL_GetTouchDeviceName(id);bool fromPad=false;
+ if(name)for(auto [pid,pad]:g_controllers)if(const char* pn=SDL_GetGamepadName(pad))if(*pn&&!strncmp(name,pn,strlen(pn)))fromPad=true;
+ LOG("[input] touch device %s%s",name?name:"?",fromPad?": a controller's, ignored":"");
+ known[id]=fromPad;return fromPad;
+#else
+ (void)id;return false;
+#endif
+}
+static bool touch_event(const SDL_Event& event){
+ auto locate=[](SDL_WindowID id,float x,float y,bool normalized,layout::Hit& hit,float& tx,float& ty){
+  SDL_Window* w=SDL_GetWindowFromID(id);if(!w)return false;
+  if(normalized){int pw=0,ph=0;SDL_GetWindowSizeInPixels(w,&pw,&ph);x*=pw;y*=ph;}
+  else{float d=SDL_GetWindowPixelDensity(w);x*=d;y*=d;}
+  hit=layout::hit(w==g_prompt_window,x,y,tx,ty);return true;
+ };
+ static float tx=0,ty=0;layout::Hit hit=layout::Hit::None;
+ switch(event.type){
+ case SDL_EVENT_MOUSE_BUTTON_DOWN:
+  if(event.button.which==SDL_TOUCH_MOUSEID||event.button.button!=SDL_BUTTON_LEFT)return false;
+  if(!locate(event.button.windowID,event.button.x,event.button.y,false,hit,tx,ty))return false;
+  if(hit==layout::Hit::Toggle){g_toggle_mouse=true;g_toggle_down=SDL_GetTicks();return true;}
+  if(hit!=layout::Hit::GamePad)return false;
+  g_mouse_touching=true;set_touch(true,tx,ty);return true;
+ case SDL_EVENT_MOUSE_MOTION:
+  if(!g_mouse_touching||event.motion.which==SDL_TOUCH_MOUSEID)return false;
+  locate(event.motion.windowID,event.motion.x,event.motion.y,false,hit,tx,ty);set_touch(true,tx,ty);return true;
+ case SDL_EVENT_MOUSE_BUTTON_UP:
+  if(g_toggle_mouse&&event.button.button==SDL_BUTTON_LEFT){g_toggle_mouse=false;toggle_released();return true;}
+  if(!g_mouse_touching||event.button.button!=SDL_BUTTON_LEFT)return false;
+  g_mouse_touching=false;set_touch(false,tx,ty);return true;
+ case SDL_EVENT_FINGER_DOWN:
+  if(controller_touch(event.tfinger.touchID))return true;
+  if(g_finger_touching||!locate(event.tfinger.windowID,event.tfinger.x,event.tfinger.y,true,hit,tx,ty))return false;
+  if(hit==layout::Hit::Toggle){g_toggle_finger=true;g_toggle_id=event.tfinger.fingerID;g_toggle_down=SDL_GetTicks();return true;}
+  if(hit!=layout::Hit::GamePad)return false;
+  g_finger_touching=true;g_touch_finger=event.tfinger.fingerID;set_touch(true,tx,ty);return true;
+ case SDL_EVENT_FINGER_MOTION:
+  if(!g_finger_touching||event.tfinger.fingerID!=g_touch_finger)return false;
+  locate(event.tfinger.windowID,event.tfinger.x,event.tfinger.y,true,hit,tx,ty);set_touch(true,tx,ty);return true;
+ case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_CANCELED:
+  if(g_toggle_finger&&event.tfinger.fingerID==g_toggle_id){g_toggle_finger=false;if(event.type==SDL_EVENT_FINGER_UP)toggle_released();return true;}
+  if(!g_finger_touching||event.tfinger.fingerID!=g_touch_finger)return false;
+  g_finger_touching=false;set_touch(false,tx,ty);return true;
+ default:return false;
+ }
+}
 void handle_event(const SDL_Event& event){
  if(overlay::is_open())mods::update_mouse();
  else if(mods::handle_mouse_event(event))return;
+ if(!overlay::is_open()&&!getenv("WWHD_NO_HOST_INPUT")&&touch_event(event))return;
  if(event.type==SDL_EVENT_GAMEPAD_ADDED&&!getenv("WWHD_NO_CONTROLLERS"))open_controller(event.gdevice.which);
  if(event.type==SDL_EVENT_GAMEPAD_REMOVED){auto i=g_controllers.find(event.gdevice.which);if(i!=g_controllers.end()){SDL_CloseGamepad(i->second);g_controllers.erase(i);}g_rumble_controllers.erase(event.gdevice.which);}
  if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST)release_keys();
@@ -289,6 +355,10 @@ void handle_event(const SDL_Event& event){
  if((event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP) && g_prompt_window &&
     event.key.windowID==SDL_GetWindowID(g_prompt_window) &&
     !(event.key.mod&(SDL_KMOD_CTRL|SDL_KMOD_ALT|SDL_KMOD_GUI))){
+  if(event.key.scancode==SDL_SCANCODE_G&&layout::single_screen()){
+   if(event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat)layout::next_view();  // TV + GamePad, GamePad, TV
+   return;
+  }
   char action=0;
   switch(event.key.scancode){
    case SDL_SCANCODE_R: action='R';break; case SDL_SCANCODE_O: action='O';break;
@@ -299,6 +369,12 @@ void handle_event(const SDL_Event& event){
   const bool activate=event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat;
   if(action && gfxvk::graphics_hotkey(action,activate)){if(activate)hostui::graphics_changed();return;}
  }
+ #ifdef __ANDROID__
+ // phones: the controller is the GamePad. Keys only type text (above): controllers such as the
+ // GameSir also show up as a keyboard and would press keyboard-mapped GamePad buttons twice.
+ static const bool keyboardPad=getenv("WWHD_ANDROID_KEYBOARD")!=nullptr;
+ if(!keyboardPad&&(event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP))return;
+ #endif
  if(event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP){int code=keycode(event.key.scancode);if(code>=0){std::lock_guard lk(g_mu);g_keys[code]=event.type==SDL_EVENT_KEY_DOWN;}}
 }
 void update(){
