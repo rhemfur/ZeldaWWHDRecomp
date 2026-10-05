@@ -63,8 +63,8 @@ void adapt_60(int64_t now) {
     }
     // Heat: a phone near its thermal limit lowers every core's maximum clock (measured: 4.47 -> 1.96
     // GHz on the fast cores, the render thread then needed twice the time per frame). The in-between
-    // frames double the drawing work, so 60 fps pauses at 95% of the thermal headroom (forecast 10 s
-    // ahead) and resumes below 80%: the game keeps its 30 fps instead of dropping below them.
+    // frames double the drawing work, so 60 fps pauses at 72% of the thermal headroom (forecast 10 s
+    // ahead; a Galaxy S25 Ultra already halved its clocks at 76%) and resumes below 60%: the game keeps its 30 fps instead of dropping below them.
     static bool hot = false;
     {
         static AThermalManager* thermal = AThermal_acquireManager();
@@ -72,8 +72,8 @@ void adapt_60(int64_t now) {
         static int tick = 0;
         if (++tick % 15 == 0) LOG("[perf] thermal headroom %.2f%s", headroom, hot ? " (60 fps paused)" : "");
         if (!std::isnan(headroom)) {
-            if (!hot && headroom >= 0.95f) { hot = true; LOG("[perf] 60 fps paused: thermal headroom %.2f", headroom); }
-            else if (hot && headroom < 0.80f) { hot = false; LOG("[perf] 60 fps resumed: thermal headroom %.2f", headroom); }
+            if (!hot && headroom >= 0.72f) { hot = true; LOG("[perf] 60 fps paused: thermal headroom %.2f", headroom); }
+            else if (hot && headroom < 0.60f) { hot = false; LOG("[perf] 60 fps resumed: thermal headroom %.2f", headroom); }
         }
     }
     if (hot) {
