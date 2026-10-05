@@ -2,12 +2,14 @@
 
 #ifdef __ANDROID__
 #include <android/performance_hint.h>
+#include <android/thermal.h>
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -56,6 +58,26 @@ void adapt_60(int64_t now) {
     const int mode = interp::mode();
     if (!layout::fps60()) {  // 60 fps not chosen
         if (mode == 1) { interp::set_mode(0); LOG("[perf] 60 fps off"); }
+        slow = roomy = 0;
+        return;
+    }
+    // Heat: a phone near its thermal limit lowers every core's maximum clock (measured: 4.47 -> 1.96
+    // GHz on the fast cores, the render thread then needed twice the time per frame). The in-between
+    // frames double the drawing work, so 60 fps pauses at 95% of the thermal headroom (forecast 10 s
+    // ahead) and resumes below 80%: the game keeps its 30 fps instead of dropping below them.
+    static bool hot = false;
+    {
+        static AThermalManager* thermal = AThermal_acquireManager();
+        const float headroom = thermal ? AThermal_getThermalHeadroom(thermal, 10) : NAN;
+        static int tick = 0;
+        if (++tick % 15 == 0) LOG("[perf] thermal headroom %.2f%s", headroom, hot ? " (60 fps paused)" : "");
+        if (!std::isnan(headroom)) {
+            if (!hot && headroom >= 0.95f) { hot = true; LOG("[perf] 60 fps paused: thermal headroom %.2f", headroom); }
+            else if (hot && headroom < 0.80f) { hot = false; LOG("[perf] 60 fps resumed: thermal headroom %.2f", headroom); }
+        }
+    }
+    if (hot) {
+        if (mode == 1) interp::set_mode(0);
         slow = roomy = 0;
         return;
     }
