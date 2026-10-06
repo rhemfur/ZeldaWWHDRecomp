@@ -23,6 +23,9 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#ifdef __linux__
+#include <unistd.h>
+#endif
 extern "C" uint64_t g_shader_state_gen;
 using namespace Latte;
 namespace gfxvk {
@@ -945,6 +948,38 @@ Pipeline &pipeline(const uint32_t *r, vk::Shader *vs, vk::Shader *ps,
   }
   for (auto m : modules)
     vkDestroyShaderModule(R.device, m, nullptr);
+  // the process's memory every 100 pipelines (a game that closed after 35 minutes on a Galaxy S25
+  // with 2.4 GB resident had run out of memory or lost the device while building one: shaders.cpp,
+  // translations under many keys)
+  if (R.pipelineCreates % 100 == 0) {
+    long residentMb = -1;
+#ifdef __linux__
+    if (FILE *f = fopen("/proc/self/statm", "r")) {
+      long pages = 0, resident = 0;
+      if (fscanf(f, "%ld %ld", &pages, &resident) == 2) residentMb = resident * (sysconf(_SC_PAGESIZE) / 1024) / 1024;
+      fclose(f);
+    }
+#endif
+    const auto shaderStats = vk::shader_stats();
+    LOG("[vulkan] %llu pipelines built, %zu cached, %llu shader keys shared a translation, process resident %ld MB",
+        (unsigned long long)R.pipelineCreates, pipelines.size(), (unsigned long long)shaderStats.variantAliases,
+        residentMb);
+  }
+  if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+    // not kept: the draws are skipped and the next one tries again (memory may come back)
+    static int reported = 0;
+    if (reported++ < 20)
+      LOG("[vulkan] graphics pipeline vs %016llX ps %016llX: out of %s memory (%zu pipelines cached); its draws are skipped",
+          (unsigned long long)vs->key, (unsigned long long)ps->key,
+          result == VK_ERROR_OUT_OF_HOST_MEMORY ? "host" : "device", pipelines.size());
+    for (VkDescriptorSetLayout set : p.sets) vkDestroyDescriptorSetLayout(R.device, set, nullptr);
+    vkDestroyPipelineLayout(R.device, p.layout, nullptr);
+    static Pipeline none{};
+    return none;
+  }
+  if (result == VK_ERROR_DEVICE_LOST)
+    LOG("[vulkan] graphics pipeline vs %016llX ps %016llX: device lost", (unsigned long long)vs->key,
+        (unsigned long long)ps->key);
   if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_HOST_MEMORY &&
       result != VK_ERROR_OUT_OF_DEVICE_MEMORY && result != VK_ERROR_DEVICE_LOST) {
     // A driver that cannot build one pipeline (Adreno: VK_ERROR_UNKNOWN on the
