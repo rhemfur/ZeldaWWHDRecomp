@@ -3,8 +3,10 @@ package org.wwhdrecomp.wwhd;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Display;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.RelativeLayout;
 
 import org.libsdl.app.SDLActivity;
 
@@ -29,6 +31,10 @@ public class WwhdActivity extends SDLActivity {
         }
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // on-screen controls over the game (the button at the top shows or hides them)
+        if (mLayout != null)
+            mLayout.addView(new TouchControls(this), new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     // Frame interpolation at 120/240 fps (runtime/src/platform/display_rate.cpp, called from native
