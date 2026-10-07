@@ -682,6 +682,11 @@ static pace_clock::duration vsync_tick() {
 // (the hold-pass estimate after a pass of the previous kind: logic or hold)
 static bool g_pass_was_hold = false;
 static bool g_wait_step = false;  // the next logic pass waits for its time
+// Android (platform/perf_hint.cpp): the render thread's CPU time per frame, one reading a second,
+// and the in-between frames a step affords at it (pacing::update_render_cap)
+static std::atomic<double> g_render_ms{0.0};
+static std::atomic<uint64_t> g_render_readings{0};
+static pacing::RenderCap g_render_cap;
 static uint64_t g_paced_possible = 0, g_paced_holds = 0, g_paced_steps = 0, g_paced_planned = 0;
 constexpr auto kPacedStep = std::chrono::nanoseconds(33'333'333);
 // a logic pass and an in-between pass both wait for the 59.94 Hz grid (2 x 16.68 = 33.37 ms, more
@@ -723,6 +728,15 @@ static int plan_step() {
                                     std::chrono::duration_cast<std::chrono::nanoseconds>(g_hold_avg).count());
         g_paced_planned += n;
     }
+    if (paced() && interp_on()) {
+        // as many as the render thread draws in a step (Android; none: the logic pass alone)
+        static uint64_t seen = 0;
+        if (const uint64_t r = g_render_readings.load(std::memory_order_relaxed); r != seen) {
+            seen = r;
+            pacing::update_render_cap(g_render_cap, g_render_ms.load(std::memory_order_relaxed));
+        }
+        if (g_render_cap.cap >= 0) n = std::max(1, std::min(n, g_render_cap.cap));
+    }
     if (g_exact_step) n = 1;  // drawn exactly; its record pass makes the next step blend again
     g_step_holds = 0;
     return n;
@@ -748,6 +762,8 @@ static void paced_step_done(int holds) {
         else
             LOG("[interp] paced: %.0f%% of in-between frames drawn (in-between pass %.1f ms)", 100.0 * g_paced_holds / double(g_paced_possible),
                 std::chrono::duration<double, std::milli>(g_hold_avg).count());
+        if (const double renderMs = g_render_ms.load(std::memory_order_relaxed); renderMs > 0)
+            LOG("[interp] paced: render thread %.1f ms a frame, room for %d in-between frames a step", renderMs, g_render_cap.cap);
         g_paced_possible = g_paced_holds = g_paced_steps = g_paced_planned = 0;
     }
 }
@@ -774,7 +790,9 @@ static void after_pass(int phase) {
     // now): one probe, if one vsync tick fits; its duration replaces the estimate.
     const bool probe = phase == 0 && now - g_last_hold >= kProbeAfter;
     const auto pass = std::chrono::duration_cast<std::chrono::nanoseconds>(probe ? vsync_tick() : g_hold_avg).count();
-    switch (pacing::next_pass(phase, g_step_n, elapsed, pass, kPacedBudget.count())) {
+    pacing::Next next = pacing::next_pass(phase, g_step_n, elapsed, pass, kPacedBudget.count());
+    if (phase == 0 && g_render_cap.cap == 0) next = pacing::Next::kDrop;  // no room in the render thread
+    switch (next) {
     case pacing::Next::kHold:
         g_hold_next = true;
         g_probe = probe;
@@ -791,6 +809,11 @@ static void after_pass(int phase) {
         paced_step_done(g_step_holds);
         break;
     }
+}
+// Android (platform/perf_hint.cpp, once a second): the render thread's CPU time per frame
+void set_render_ms(double ms) {
+    g_render_ms.store(ms, std::memory_order_relaxed);
+    g_render_readings.fetch_add(1, std::memory_order_relaxed);
 }
 }  // namespace interp
 

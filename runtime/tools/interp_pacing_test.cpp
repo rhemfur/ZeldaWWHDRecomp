@@ -259,6 +259,27 @@ static void test_simulation() {
     CHECK(r.steps_per_s < 10);
 }
 
+static void test_render_cap() {
+    // the render thread's room: 60 fps none from 14.5 ms a frame, back below 13 ms after 3 readings
+    RenderCap rc;
+    CHECK(update_render_cap(rc, 0) == -1);  // not measured (desktop): no limit
+    CHECK(update_render_cap(rc, 10.0) == 1);
+    CHECK(update_render_cap(rc, 14.5) == 0);
+    CHECK(update_render_cap(rc, 12.0) == 0);  // one lighter reading is not enough
+    CHECK(update_render_cap(rc, 13.5) == 0);  // between the thresholds: the count starts over
+    CHECK(update_render_cap(rc, 12.0) == 0);
+    CHECK(update_render_cap(rc, 12.0) == 0);
+    CHECK(update_render_cap(rc, 12.0) == 1);  // third reading in a row below 13 ms
+    CHECK(update_render_cap(rc, 14.4) == 1);  // two frames still fit in 29 ms
+    // 120/240 fps: as many in-between frames as the render thread draws in a step
+    RenderCap hi;
+    CHECK(update_render_cap(hi, 7.0) == 3);   // four 7 ms frames in 29 ms
+    CHECK(update_render_cap(hi, 9.0) == 2);
+    CHECK(update_render_cap(hi, 3.0) == 2);   // (up again only after 3 readings)
+    CHECK(update_render_cap(hi, 3.0) == 2);
+    CHECK(update_render_cap(hi, 3.0) == 7);
+}
+
 int main() {
     test_fractions();
     test_blends();
@@ -266,6 +287,7 @@ int main() {
     test_cap();
     test_plan_and_next();
     test_simulation();
+    test_render_cap();
     if (g_failed) {
         std::fprintf(stderr, "interp_pacing_test: %d check(s) failed\n", g_failed);
         return 1;

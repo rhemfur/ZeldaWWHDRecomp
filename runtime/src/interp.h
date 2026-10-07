@@ -20,6 +20,9 @@ void set_paced_interpolation(bool on);
 bool paced_interpolation_at(int fps);
 void set_paced_interpolation_at(int fps, bool on);
 float paced_drawn_share();  // share of in-between frames drawn lately (paced and on), -1 otherwise
+// the render thread's CPU time per frame (Android, platform/perf_hint.cpp, once a second): paced
+// steps plan no more in-between frames than it draws in a step
+void set_render_ms(double ms);
 
 // the display (hosts and renderers): refresh rate of the TV window's screen (0: unknown), and
 // whether presenting waits for its vsync (Metal, Vulkan FIFO)

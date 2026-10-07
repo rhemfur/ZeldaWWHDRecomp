@@ -108,5 +108,36 @@ inline Next next_pass(int phase, int n, int64_t elapsed, int64_t pass, int64_t b
     return Next::kDrop;
 }
 
+// The render thread draws every frame of a step: frames whose CPU time (ms, measured over the last
+// second; 0 = not measured) does not fit in a step leave the game waiting for the render thread.
+// How many in-between frames it affords: frames that fit in kRenderDown ms, less the logic pass's
+// own. Fewer at once when it gets slower; more only after kCalmReadings readings in a row that fit
+// them in kRenderUp ms (a single lighter second, such as a camera turn, brought them back into a
+// scene too heavy for them). 60 fps: none from 14.5 ms a frame, back below 13 ms.
+// cap < 0: no limit yet.
+struct RenderCap {
+    int cap = -1;
+    int calm = 0;
+};
+constexpr double kRenderDown = 29.0, kRenderUp = 26.0;
+constexpr int kCalmReadings = 3;
+inline int update_render_cap(RenderCap& rc, double ms) {
+    if (!(ms > 0)) return rc.cap = -1;  // not measured (desktop): no limit
+    const int down = std::max(0, int((kRenderDown - 1e-9) / ms) - 1);
+    const int up = std::max(0, int(kRenderUp / ms) - 1);
+    if (rc.cap < 0 || down < rc.cap) {
+        rc.cap = down;
+        rc.calm = 0;
+    } else if (up > rc.cap) {
+        if (++rc.calm >= kCalmReadings) {
+            rc.cap = up;
+            rc.calm = 0;
+        }
+    } else {
+        rc.calm = 0;
+    }
+    return rc.cap;
+}
+
 }  // namespace pacing
 }  // namespace interp

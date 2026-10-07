@@ -71,6 +71,7 @@ void adapt_60(int64_t now) {
     const int64_t cpu = thread_cpu_ns();
     const double msPerFrame = (cpu - windowCpu) / 1e6 / frames;
     windowStart = now; windowCpu = cpu; frames = 0;
+    interp::set_render_ms(msPerFrame);  // paced: in-between frames the render thread has room for
     const int mode = interp::mode();
     sync_choice();
     if (mode == 2) return;
