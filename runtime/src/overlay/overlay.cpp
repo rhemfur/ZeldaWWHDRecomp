@@ -3,6 +3,10 @@
 // resulting ImDrawData (gfx/overlay_metal.mm, gfx/vulkan/overlay.cpp); the hosts feed input and apply
 // changes on their main thread (hostui.h).
 #include "overlay.h"
+#include "perf_average.h"
+#ifdef __ANDROID__
+#include "android_telemetry.h"
+#endif
 
 #include <algorithm>
 #include <cstdarg>
@@ -26,6 +30,9 @@
 #include "../crashrec.h"
 #include "../game_languages.h"
 #include "../gfx/renderer.h"
+#ifdef __ANDROID__
+#include "../gfx/vulkan/android_driver.h"
+#endif
 #ifdef WWHD_HAS_VULKAN
 #include "../gfx/vulkan/settings.h"
 namespace gfxvk { bool buffer_cache_enabled(); }  // gfx/vulkan/buffer_cache.h
@@ -57,6 +64,7 @@ double now_s() { return std::chrono::duration<double>(clock::now().time_since_ep
 
 std::atomic<bool> g_open{false};
 std::atomic<bool> g_perf{false};
+PerfAverage g_average;
 std::atomic<float> g_density{1.0f};
 std::atomic<bool> g_wait_release{false};  // just closed: the game sees no buttons until all are released
 std::atomic<double> g_last_frame{0};      // frame() ran (alive(): the game's text prompt can show)
@@ -559,6 +567,25 @@ void tab_saves() {
 }
 
 void tab_graphics() {
+#ifdef __ANDROID__
+    heading("GPU driver (Snapdragon / Adreno)");
+    note("Active: %s", gfxvk::drivers::active_name().c_str());
+    auto driver_action = [](auto fn) { hostui::post([fn] { try { fn(); } catch (const std::exception& e) { LOG("[vulkan driver] %s", e.what()); } }); };
+    if (ImGui::Button("Install driver ZIP...")) driver_action([] { gfxvk::drivers::request_install(); });
+    auto selected = gfxvk::drivers::selection();
+    if (radio("System driver", selected.empty())) driver_action([] { gfxvk::drivers::select(""); });
+    for (const auto& driver : gfxvk::drivers::installed()) {
+        ImGui::PushID(driver.id.c_str());
+        auto id = driver.id;
+        if (radio((driver.name + " " + driver.version).c_str(), selected == id))
+            driver_action([id] { gfxvk::drivers::select(id); });
+        ImGui::SameLine();
+        if (ImGui::Button("Remove")) driver_action([id] { gfxvk::drivers::remove(id); });
+        ImGui::PopID();
+    }
+    note("%s", gfxvk::drivers::message().c_str());
+    help("Driver changes take effect on restart. An unfinished first 120-frame probe selects the system driver on the next start.");
+#endif
     if (render::can_choose()) {
         heading("Renderer (takes effect after a restart)");
         for (render::Api a : {render::Api::Metal, render::Api::Vulkan}) {
@@ -693,6 +720,7 @@ void tab_graphics() {
 #endif
     heading("Overlay");
     if (check("Performance overlay (FPS, frame time)", perf_shown(), &v)) set_perf_shown(v);
+    if (ImGui::Button("Reset performance averages")) g_average.reset();
     // the render-thread profiler's latest report (render_prof.h), for performance bug reports
     static double copiedAt = -10;
     if (ImGui::Button("Copy performance report")) {
@@ -1000,6 +1028,20 @@ void tab_mods() {
                 float speed = mods::camera_speed();
                 if (ImGui::SliderFloat("Camera speed", &speed, .5f, 2.f, "%.2fx"))
                     hostui::post([speed] { mods::set_camera_speed(speed); hostui::set("mod.direct-camera.speed", std::to_string(speed)); mods::packages::remember_option("direct-camera.speed", speed); });
+            } else if (selected == "move-speed") {
+                float speed = mods::move_speed_factor();
+                if (ImGui::SliderFloat("Run/swim multiplier", &speed, 1.25f, 4.f, "%.2fx"))
+                    hostui::post([speed] { mods::set_move_speed_factor(speed); hostui::set("mod.move-speed.factor", std::to_string(speed)); mods::packages::remember_option("move-speed.factor", speed); });
+                const char* names[] = {"L3", "R3", "L", "R", "ZL", "ZR"};
+                const uint32_t buttons[] = {input::kStickL, input::kStickR, input::kL, input::kR, input::kZL, input::kZR};
+                for (int i = 0; i < 6; ++i) {
+                    if (i) ImGui::SameLine();
+                    if (radio(names[i], mods::move_speed_button() == buttons[i])) {
+                        auto button = buttons[i];
+                        hostui::post([button] { mods::set_move_speed_button(button); hostui::set("mod.move-speed.button", std::to_string(button)); mods::packages::remember_option("move-speed.button", button); });
+                    }
+                }
+                help("Hold to boost horizontal movement while running or swimming. Rebind the chosen game button in Controls.");
             } else if (selected == "mouse-camera") {
                 float sensitivity = mods::mouse_sensitivity();
                 if (ImGui::SliderFloat("Sensitivity", &sensitivity, .08f, .3f, "%.3f"))
@@ -1513,6 +1555,15 @@ void perf_window(bool menu_open) {
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##perf", nullptr, fl)) {
         ImGui::Text("%.0f fps   %.1f ms (worst %.1f)", U.fps, sum / 120.0f, worst);
+        ImGui::Text("Average %.1f fps   %.1f logic steps/s", g_average.fps, g_average.logic);
+#ifdef __ANDROID__
+        static AndroidTelemetry telemetry;
+        static double next_read = 0;
+        if (t >= next_read) { telemetry.read(); next_read = t + 2; }
+        if (telemetry.busy >= 0) ImGui::Text("GPU busy %.0f%%", telemetry.busy);
+        for (const auto& [name, value] : telemetry.temperatures)
+            ImGui::Text("%s %.1f C", name.c_str(), value);
+#endif
         ImGui::PlotLines("##ft", U.frame_ms, 120, U.frame_i, nullptr, 0.0f, 50.0f, ImVec2(220, 36));
         ImGui::TextDisabled("%s  %gx  %s", render::api_name(render::active()), hostui::res_scale(), interp::mode_name());
         if (float share = interp::paced_drawn_share(); share >= 0)
@@ -1696,6 +1747,8 @@ ImDrawData* frame(float pw, float ph, void (*renderer_init)()) {
     }
     U.last_present = t;
     g_last_frame = t;
+    g_average.sample(t, gx2::flips_presented(), interp::executed_steps(), int(render::active()),
+                     interp::mode(), interp::fps(), hostui::res_scale());
     read_controller();
     // the game's text prompt shows unless the menu is open over it (the menu has the input then)
     const bool open = is_open(), perf = perf_shown(), text = !open && text_entry::active();

@@ -1,10 +1,17 @@
 #ifndef VK_ENABLE_BETA_EXTENSIONS
 #define VK_ENABLE_BETA_EXTENSIONS
 #endif
+#ifndef __ANDROID__
+#define WWHD_CREATE_WINDOW_SURFACE SDL_Vulkan_CreateSurface
+#else
+#define WWHD_CREATE_WINDOW_SURFACE drivers::create_surface
+#endif
 #if defined(__APPLE__) && !defined(WWHD_SDL_HOST)
 #define VK_USE_PLATFORM_METAL_EXT  // VK_EXT_metal_surface: AppKit views' CAMetalLayers
 #endif
 #include "backend.h"
+#include "bc_decode.h"
+#include "android_driver.h"
 #include "buffer_cache.h"
 #include "render_prof.h"
 #include "report_header.h"
@@ -121,7 +128,16 @@ bool unpack_pipeline_cache(std::vector<uint8_t>& file) {
 }
 void init_pipeline_cache() try {
   if (const char* explicitPath=std::getenv("WWHD_VK_PIPELINE_CACHE")) {
-    if (std::strcmp(explicitPath,"0")) pipelineCachePath=explicitPath;
+    if (std::strcmp(explicitPath,"0")) {
+      pipelineCachePath=explicitPath;
+#ifdef __ANDROID__
+      // Keep overrides in the driver's cache namespace so removing a driver removes every cache.
+      char key[32];
+      std::snprintf(key,sizeof key,"override-%016llx.bin",static_cast<unsigned long long>(
+          pipeline_cache_checksum(reinterpret_cast<const uint8_t*>(explicitPath),std::strlen(explicitPath))));
+      pipelineCachePath = drivers::pipeline_directory()+"/"+key;
+#endif
+    }
   } else if (const char* shaderPath=std::getenv("WWHD_SHADER_CACHE");
              !shaderPath || std::strcmp(shaderPath,"0")) {
     char ids[32];
@@ -129,11 +145,24 @@ void init_pipeline_cache() try {
     // a WWHD_SHADER_CACHE file (test runs, separate setups) keeps the pipeline cache next to it,
     // so such runs never write the user's own cache in the config folder
     pipelineCachePath=shaderPath ? std::string(shaderPath)+"."+ids
-                                 : host::config_dir()+"/shadercache/"+ids;
+                                 :
+#ifdef __ANDROID__
+                                   drivers::pipeline_directory()+"/"+ids;
+#else
+                                   host::config_dir()+"/shadercache/"+ids;
+#endif
     for (uint8_t byte : R.properties.pipelineCacheUUID) {
       char hex[3]; std::snprintf(hex,sizeof hex,"%02x",byte); pipelineCachePath+=hex;
     }
     pipelineCachePath+=".bin";
+#ifdef __ANDROID__
+    if (shaderPath) {
+      char key[32];
+      std::snprintf(key,sizeof key,"shaders-%016llx-",static_cast<unsigned long long>(
+          pipeline_cache_checksum(reinterpret_cast<const uint8_t*>(shaderPath),std::strlen(shaderPath))));
+      pipelineCachePath = drivers::pipeline_directory()+"/"+key+std::filesystem::path(pipelineCachePath).filename().string();
+    }
+#endif
   }
   std::vector<uint8_t> bytes;
   if (!pipelineCachePath.empty()) {
@@ -481,7 +510,8 @@ static void init_gpu_timestamp_queries() {
     if (result != VK_SUCCESS) {
       // Initialization has submitted no work, so partial pools are safe to destroy.
       slot.timestampQueries = VK_NULL_HANDLE;
-      destroy_gpu_timestamp_queries();
+      bc_decode_shutdown();
+  destroy_gpu_timestamp_queries();
       LOG("[vulkan GPU timestamps] optional query pools unavailable (%d); disabled", int(result));
       return;
     }
@@ -1021,7 +1051,7 @@ static void recreate_surface(Screen &s) {
   if (s.surface)
     vkDestroySurfaceKHR(R.instance, s.surface, nullptr);
   s.surface = VK_NULL_HANDLE;
-  if (!SDL_Vulkan_CreateSurface(s.window, R.instance, nullptr, &s.surface)) {
+  if (!WWHD_CREATE_WINDOW_SURFACE(s.window, R.instance, nullptr, &s.surface)) {
     LOG("[vulkan] surface recreation: %s (retrying)", SDL_GetError());
     s.surface = VK_NULL_HANDLE;
     surfaceRecreate = true;
@@ -1482,6 +1512,9 @@ void swap() {
   service_screenshots();  // this frame's: the submission that holds them
   std::atomic_ref<uint64_t>(R.frame).fetch_add(1);
   R.completed = R.frame;
+#ifdef __ANDROID__
+  if (tvScan) drivers::frame_done();
+#endif
   buffer_cache_end_frame();
   report_gpu_timestamps();
   perf_hint::frame_done();
@@ -1935,6 +1968,7 @@ static void init_device(std::vector<const char *> extensions,
         if ((qs[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) && tv && drc) {
           R.physicalDevice = device;
           R.queueFamily = q;
+          R.computeQueue = (qs[q].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
           R.gpuTimestampValidBits = qs[q].timestampValidBits;
           R.dynamicRenderingKHR = have == DynamicRendering::KHR;
           break;
@@ -2017,6 +2051,10 @@ static void init_device(std::vector<const char *> extensions,
   VkPhysicalDeviceFeatures available;
   vkGetPhysicalDeviceFeatures(R.physicalDevice, &available);
   VkPhysicalDeviceFeatures enabled{};
+  // The game's BC1-BC5 textures need this core feature enabled, not just supported (Vulkan spec);
+  // devices without it (many Mali/PowerVR GPUs) decode BC uploads with a compute shader (bc_decode).
+  enabled.textureCompressionBC = available.textureCompressionBC;
+  if (!available.textureCompressionBC) LOG("[vulkan] device has no BC texture support; compute upload decoder enabled");
   enabled.samplerAnisotropy = available.samplerAnisotropy;
   enabled.independentBlend = available.independentBlend;
   enabled.depthClamp = available.depthClamp;
@@ -2027,12 +2065,6 @@ static void init_device(std::vector<const char *> extensions,
   enabled.largePoints = available.largePoints;
   enabled.dualSrcBlend = available.dualSrcBlend;
   enabled.logicOp = available.logicOp;
-  // The game's textures are mostly BC1-BC5 and they are created as VK_FORMAT_BC* (formats.cpp);
-  // sampling them requires this core feature to be enabled, not just supported (Vulkan spec).
-  // Desktop GPUs and MoltenVK have it; many mobile GPUs (Mali, PowerVR) don't.
-  enabled.textureCompressionBC = available.textureCompressionBC;
-  if (!available.textureCompressionBC)
-    LOG("[vulkan] device has no BC texture support (textureCompressionBC): compressed game textures will not display correctly");
   R.enabledFeatures = enabled;
   VkPhysicalDeviceVulkan13Features f13{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -2082,6 +2114,7 @@ static void init_device(std::vector<const char *> extensions,
   vk_check(vkCreateFence(R.device, &fi, nullptr, &slot.fence),
            "create frame fence");
   VkDescriptorPoolSize sizes[] = {
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 65536},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32768},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 32768},
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 65536}};
@@ -2165,7 +2198,11 @@ void init() {
                                          "(vulkan-1.dll) "
 #endif
                                          "could not be loaded (") + SDL_GetError() + ").\n\n" + kUpdateDriver);
-  load_global_functions(reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr()));
+  auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
+#ifdef __ANDROID__
+  if (auto custom = drivers::open_custom()) gipa = custom;
+#endif
+  load_global_functions(gipa);
 #ifdef __ANDROID__
   SDL_AddEventWatch(lifecycle_watch, nullptr);
   const SDL_WindowFlags windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN;
@@ -2208,10 +2245,10 @@ void init() {
       s->height = height;
     }
   init_device(std::vector<const char *>(se, se + n), [] {
-    if (!SDL_Vulkan_CreateSurface(R.tv.window, R.instance, nullptr,
+    if (!WWHD_CREATE_WINDOW_SURFACE(R.tv.window, R.instance, nullptr,
                                   &R.tv.surface))
       throw std::runtime_error(SDL_GetError());
-    if (R.drc.window && !SDL_Vulkan_CreateSurface(R.drc.window, R.instance,
+    if (R.drc.window && !WWHD_CREATE_WINDOW_SURFACE(R.drc.window, R.instance,
                                                   nullptr, &R.drc.surface))
       throw std::runtime_error(SDL_GetError());
   });
@@ -2226,6 +2263,7 @@ void save_renderer_caches() {
   // Called during orderly shutdown under the renderer execution lock.
   reset_feedback_images();
   wait_idle();
+  bc_decode_shutdown();
   destroy_gpu_timestamp_queries();
   vk::save_shader_cache();
   save_pipeline_cache();

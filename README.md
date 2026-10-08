@@ -1,6 +1,6 @@
 # The Legend of Zelda: The Wind Waker HD — native port (macOS, Linux, Windows, Android)
 
-A static recompilation of the Wii U version (USA) that runs natively on **macOS** (Apple Silicon),
+A static recompilation of the Wii U version (USA or European) that runs natively on **macOS** (Apple Silicon),
 **Linux**, **Windows** and **Android** (arm64; [build it yourself](#android-build-it-yourself)). The
 game's PowerPC code is translated to C ahead of time, the Cafe OS libraries the game uses are
 reimplemented natively, and GX2 graphics are implemented directly on Metal (macOS) or Vulkan (all
@@ -10,8 +10,32 @@ How it works and how it differs from running the game in Cemu: [docs/how-it-work
 
 ## What's new in this update
 
-### Next update
+### v0.2.9
 
+- **Play the European version directly** (title 00050000-10143600): setup now also accepts the
+  European game on its own, without the USA version, and builds the port from it through an address
+  map derived from the two executables (every function and call matched; contributed by **@ElFDA**,
+  PR #77, with ideas from GreenNaugahyde's Android fork). German, Italian, British English, French and
+  Spanish are its own languages then. Hooks, mods and save states work as on the USA version.
+- **Bloom, distance haze and the sun's glare are back:** the game builds its glow from smaller
+  copies of the picture, which the port never made; now it does, on Metal and Vulkan, so the picture
+  looks like on the Wii U again. The sun's corona and lens flare react to whether the sun is hidden
+  (adapted from GreenNaugahyde's Android fork). New **Settings → Graphics → Effects → Bloom
+  strength** (0–200%, default 100%). On Macs, colours now go through the display's colour profile, as
+  with Vulkan.
+- **Android:** phones whose GPU can't read the game's compressed textures (many Mali and PowerVR
+  GPUs) now decode them on the GPU instead of showing black or broken textures; on Snapdragon phones
+  you can install and select custom Vulkan drivers such as Turnip (**Settings → Graphics**; a driver
+  that crashes or hangs in its first seconds falls back to the system driver on the next start). Both
+  follow the approach of [GreenNaugahyde's Android fork](https://github.com/GreenNaugahyde/ZeldaWWHDRecompAndroid),
+  rebuilt on our renderer. Not yet tested on real Mali/PowerVR/Snapdragon devices: reports welcome.
+- **Run and swim faster** (optional, Mods tab, off by default): hold L3 (or toggle) to boost Link's
+  running and swimming speed, 1.25x to 4x; works with true 60. The idea comes from GreenNaugahyde's
+  Android fork.
+- **Average frame rate** in the performance overlay (and GPU load and temperatures on Android where
+  readable); **crash logs** now include the settings in use, with your user paths removed, and Android
+  offers to share the log after a crash.
+- **Vulkan:** the compressed-texture feature is now enabled as the Vulkan specification requires.
 - **Screenshot key:** **F10** saves the TV picture as a PNG in a `screenshots` folder next to the save
   states (`~/Library/Application Support/wwhd/screenshots`, `%APPDATA%\WWHD\screenshots`,
   `~/.config/wwhd/screenshots`; `data/user/screenshots` in a release folder), named
@@ -395,7 +419,8 @@ computer (about two minutes); every later start launches the game directly.
      release folder is used automatically). Keys are checked before anything is extracted, never
      stored, and not part of any log. A Cemu archive or an extracted folder needs no keys.
    - A Cemu archive (Cemu's "Convert to compressed Wii U archive (.wua)") often holds the game, its
-     update and DLC together. Setup uses the game itself, title 00050000-10143500 version 0, and says
+     update and DLC together. Setup uses the game itself, title 00050000-10143500 (USA) or
+     00050000-10143600 (Europe), version 0, and says
      so in its log; an update in the archive is not used: the port is built for the code of version 0,
      and the update's files belong to its newer code. The archive's checksum is verified before
      anything is extracted.
@@ -403,10 +428,13 @@ computer (about two minutes); every later start launches the game directly.
    Then it prepares the game (extract, translate the code to C, compile with a pinned compiler) and
    offers to bring in a save: a Wind Waker HD `cking.sav` folder (Cemu, Wii U), a GameCube `.gci`
    (converted to HD), or the saves and settings of an earlier installation or another Wind Waker HD
-   folder (copied, never moved). Only the USA version (title 00050000-10143500), version 0 (the disc
-   or eShop release, without the update) is supported: before translating, setup checks the game's
-   code (`code/cking.rpx`) against the SHA-256 of that version and explains what to use instead when
-   it differs (e.g. a game folder with an update copied over it).
+   folder (copied, never moved). The USA version (title 00050000-10143500) and the European one
+   (00050000-10143600) are supported, version 0 of either (the disc or eShop release, without the
+   update): before translating, setup checks the game's code (`code/cking.rpx`) against the SHA-256
+   of each and explains what to use instead when it matches neither (e.g. a game folder with an
+   update copied over it). The European game plays in English, French, German, Italian or Spanish —
+   its own text, chosen in the settings' Language tab. How one port serves both:
+   [docs/builds.md](docs/builds.md).
 3. That's it: start Wind Waker HD to play. To repair, update or change the game, hold **Shift** while
    starting it (macOS, Windows) or start it with `--setup` (Linux; also the "Setup" action of its
    menu entry).
@@ -468,8 +496,9 @@ Source builds (below) are not portable: they keep using `~/Library/Application S
 
 You also need, from your own console and disc:
 
-- a disc image of The Wind Waker HD (USA) in `.wud` or `.wux` format (or a Cemu archive, `.wua`:
-  `build/cmake/wwhd-extract --title 0005000010143500 extract game.wua game`, no keys);
+- a disc image of The Wind Waker HD (USA or Europe) in `.wud` or `.wux` format (or a Cemu archive,
+  `.wua`: `build/cmake/wwhd-extract --title 0005000010143500 extract game.wua game`, with
+  `0005000010143600` for the European game, no keys);
 - its disc key (16 bytes) in a `.key` file next to the image, with the same base name;
 - the Wii U common key, either in a file `common.key` (16 raw bytes or 32 hex digits) next to
   the image or in the current directory, or in the `WIIU_COMMON_KEY` environment variable
@@ -664,8 +693,9 @@ the next start; picture scaling; the GamePad screen),
 gameplay mods and cheats (Graphics also has the Vulkan presentation mode), controls (the same controller drawing as Input > Controls…: select a
 button or chip and press the key or controller input to use; also on Windows and Linux) and the
 console language (only the languages your game contains can be chosen; the USA game has English,
-French and Spanish; experimental: German, Italian, British English or Japanese from your own European
-or Japanese copy of the game, see [docs/language-packs.md](docs/language-packs.md); fan translations
+French and Spanish, the European one English, French, German, Italian and Spanish; experimental:
+those languages from your own European or Japanese copy of the game played with the USA code, see
+[docs/language-packs.md](docs/language-packs.md); fan translations
 into Arabic or Hebrew are drawn right to left, see [docs/rtl-text.md](docs/rtl-text.md)).
 Mouse, keyboard (arrows, Enter, Esc) and controller (D-pad / stick, A, B; L / R switch tabs) all work.
 The game keeps running but gets no input while it is open; Esc, F1 or B closes it. On macOS it shows
@@ -915,6 +945,15 @@ The code of this project is licensed under the Mozilla Public License 2.0 (see `
 Vendored third-party code keeps its own license: Cemu (MPL-2.0), metal-cpp (Apache-2.0), {fmt} (MIT) and Dear ImGui (MIT); see Credits. The extractor links zstd (BSD-3-Clause); releases build it from its pinned release source. The game itself is Nintendo's property and is not included.
 
 ## Credits
+
+European-game builds and the executable-derived address map are by
+[ElFDA](https://github.com/ElFDA), contributed in [PR #77](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp/pull/77).
+The combined integration adds the runtime address audit and regional regression scenarios.
+Thanks also to [GreenNaugahyde](https://github.com/GreenNaugahyde) and the MPL-2.0
+[ZeldaWWHDRecompAndroid](https://github.com/GreenNaugahyde/ZeldaWWHDRecompAndroid) fork: its EUR
+address mapping informed the desktop prototype, and the rendered mip chains and sun depth peeks
+(bloom, haze, the sun's glare), the GPU decoder for compressed textures, custom Adreno driver
+support and the run/swim speed boost were adapted from or modelled on its work.
 
 The Android port (`android/`, the Android parts of the runtime, the single-screen view) is by
 [rhemfur](https://github.com/rhemfur), who also contributed the paced frame interpolation, the

@@ -1,3 +1,4 @@
+#include "interp.h"
 #include "mods/packages.h"
 // Frame interpolation (60, 120 or 240 fps output, game logic unchanged at 30 steps per second).
 //
@@ -32,6 +33,7 @@
 #include <vector>
 
 #include "interp_pacing.h"
+#include "guest_addr.h"
 #include "render_prof.h"
 #include "runtime.h"
 #include "savestate.h"
@@ -285,6 +287,7 @@ CamState blend(const CamState& a, const CamState& b, float t) {
     return m;
 }
 
+std::atomic<uint64_t> g_executed_steps{0};
 uint64_t g_logic_steps = 0; // full logic steps (all passes without a 60 fps mode)
 uint64_t g_passes = 0;      // every pass of the per-frame function
 bool g_hold = false;        // hold pass: draw only, no logic
@@ -386,7 +389,7 @@ extern "C" void hook_024FFC40(Cpu* c) {
         static std::vector<uint32_t> before;
         static std::unordered_map<uint32_t, int> cnt;
         static int n = 0;
-        const uint32_t lo = 0x10100000, hi = 0x10500000;
+        const uint32_t lo = GD(0x10100000), hi = 0x10500000;
         before.assign((uint32_t*)ppc_ptr(lo), (uint32_t*)ppc_ptr(hi));
         f_024FFC40_orig(c);
         const uint32_t* cur = (const uint32_t*)ppc_ptr(lo);
@@ -940,8 +943,10 @@ extern "C" void hook_025F172C(Cpu* c) {
 // drawing code), and those calls must always run.
 static Cpu* g_hold_child_cpu = nullptr;
 static bool called_from_frame_function() {
+    // the per-frame function, in this build (runtime/include/guest_addr.h)
+    static const uint32_t lo = GC(0x0203593C), hi = GC(0x02035A78);
     uint32_t lr = g_hold_child_cpu ? g_hold_child_cpu->lr : 0;
-    return lr > 0x0203593C && lr < 0x02035A78;
+    return lr > lo && lr < hi;
 }
 static bool hold_skip_child(int i) {
     // children 7-14 (after the loop body: frame setup, lighting, display) run; 1, 4, 5 (HD menus and
@@ -971,7 +976,7 @@ namespace interp { void light_trace_add(const char* fmt, ...); }
 // The state from before the logic pass's call is put back first, so with the random numbers
 // replayed (interp_fx.cpp) the hold pass gets exactly the logic pass's light.
 namespace {
-constexpr uint32_t kSetLightTarget = 0x101E8EC8, kSetLightEfTarget = 0x101E8ECC, kLightStatusPt = 0x101E8CC8;
+const uint32_t kSetLightTarget = GD(0x101E8EC8), kSetLightEfTarget = GD(0x101E8ECC), kLightStatusPt = GD(0x101E8CC8);
 struct SetLightState {
     uint64_t step = ~0ull;
     uint32_t target, ef_target, status, pos[3];
@@ -1015,8 +1020,8 @@ extern "C" void hook_0255E854(Cpu* c) {
         after_logic.status = st2;
         for (int i = 0; i < 3; i++) after_logic.pos[i] = st2 ? ld32(st2 + 4 * i) : 0;
     }
-    uint32_t st = ld32(0x101E8CC8);  // lightStatusPt
-    interp::light_trace_add(" setLight t%.2f r%u p(%.1f,%.1f,%.1f)", ldf32(0x101E8EC8), st ? ld8(st + 0x18) : 0, st ? ldf32(st) : 0.0,
+    uint32_t st = ld32(GD(0x101E8CC8));  // lightStatusPt
+    interp::light_trace_add(" setLight t%.2f r%u p(%.1f,%.1f,%.1f)", ldf32(GD(0x101E8EC8)), st ? ld8(st + 0x18) : 0, st ? ldf32(st) : 0.0,
                             st ? ldf32(st + 4) : 0.0, st ? ldf32(st + 8) : 0.0);
 }
 extern "C" void hook_02738438(Cpu* c) {
@@ -1044,6 +1049,7 @@ static bool g_in_execute = false;  // inside fpcEx_Handler (actor Execute): logi
 namespace mods { void after_execute(Cpu* c, uint32_t execute_fn); }  // mods/turbo.cpp
 extern "C" void hook_025DE788(Cpu* c) {
     if (skip(1) && !true60::enabled()) return;  // true 60: the per-process gate decides (true60.cpp)
+    interp::record_executed_step();
     g_in_execute = true;
     uint32_t execute_fn = c->r[3];
     f_025DE788_orig(c);
@@ -1086,6 +1092,8 @@ bool hold_pass() { return g_hold; }
 // full (30 Hz) logic steps so far: test scenarios run on game time, so frame-time hitches (which
 // slow the frame-locked game down) don't shift the input against the game
 uint64_t logic_steps() { return g_logic_steps; }
+void record_executed_step() { g_executed_steps.fetch_add(1, std::memory_order_relaxed); }
+uint64_t executed_steps() { return g_executed_steps.load(std::memory_order_relaxed); }
 // pass state for the effect blending (interp_fx.cpp)
 bool logic_pass() { return g_logic_pass; }
 // inside the loop body of a blended pass (logic pass, or a blended hold pass at 120/240 fps)
