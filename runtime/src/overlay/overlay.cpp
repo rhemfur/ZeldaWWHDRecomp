@@ -372,10 +372,12 @@ void read_controller() {
 void feed_gamepad(ImGuiIO& io, bool enabled) {
     using namespace input_map;
     auto key = [&](ImGuiKey k, int p) { io.AddKeyAnalogEvent(k, enabled && U.values[p] > 0.5f, enabled ? U.values[p] : 0.0f); };
-    key(ImGuiKey_GamepadFaceDown, kPadA);
-    key(ImGuiKey_GamepadFaceRight, kPadB);
-    key(ImGuiKey_GamepadFaceLeft, kPadX);
-    key(ImGuiKey_GamepadFaceUp, kPadY);
+    // ImGui activates with FaceDown and goes back with FaceRight: give it the buttons that are the
+    // Wii U's A and B in the face-button preset, so the menus confirm and cancel as the game does
+    key(ImGuiKey_GamepadFaceDown, face_input(kA));
+    key(ImGuiKey_GamepadFaceRight, face_input(kB));
+    key(ImGuiKey_GamepadFaceLeft, face_input(kX));
+    key(ImGuiKey_GamepadFaceUp, face_input(kY));
     key(ImGuiKey_GamepadDpadUp, kPadDUp);
     key(ImGuiKey_GamepadDpadDown, kPadDDown);
     key(ImGuiKey_GamepadDpadLeft, kPadDLeft);
@@ -855,7 +857,7 @@ void native_confirm_dialog(NativeConfirm& c, std::string& error) {
         ImGui::SameLine();
         answered = ImGui::Button("Cancel", ImVec2(120, 0)) || accept;
         ImGui::SetItemDefaultFocus();  // keyboard and controller start on Cancel
-        if (controller_pressed(input_map::kPadB)) { answered = true; accept = false; g_pad_b_used = true; }
+        if (controller_pressed(input_map::face_input(input_map::kB))) { answered = true; accept = false; g_pad_b_used = true; }
     }
     if (accept) {
         bool ok = true;
@@ -1708,7 +1710,7 @@ void settings_window() {
     ImGui::End();
     // B (not while choosing an input or in a list) or the close button closes the menu
     if (!open) set_open(false);
-    if (U.cap_action < 0 && controller_pressed(input_map::kPadB) && !g_pad_b_used && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+    if (U.cap_action < 0 && controller_pressed(input_map::face_input(input_map::kB)) && !g_pad_b_used && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
         set_open(false);
     g_pad_b_used = false;
 }

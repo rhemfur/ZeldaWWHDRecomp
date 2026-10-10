@@ -73,6 +73,9 @@ enum class FaceLayout { kPosition, kLabels, kCustom };
 FaceLayout face_layout(const Mapping& m);
 void apply_face_layout(Mapping& m, FaceLayout layout);  // rewrites pad[kA..kY]; kCustom is a no-op
 const char* face_layout_label(FaceLayout l);            // for the UI
+// the controller input that is the Wii U's A, B, X or Y (action kA..kY) in the current mapping, for
+// the overlay's own menus and on-screen keyboard (confirm/back as in the game); unbound: by position
+int face_input(int action);
 
 // actions (other than `except`) that use this key / controller input
 std::vector<int> key_users(const Mapping& m, int code, int except = -1);
