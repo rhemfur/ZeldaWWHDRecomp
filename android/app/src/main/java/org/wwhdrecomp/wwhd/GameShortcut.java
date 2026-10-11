@@ -24,21 +24,22 @@ public final class GameShortcut {
 
     static final String ID = "game";
 
-    /** Asks the launcher to pin the shortcut, unless it is pinned already or pinning is unsupported. */
-    public static void offer(Context context, File game) {
+    /** Asks the launcher to pin the shortcut, unless it is pinned already or pinning is unsupported.
+     *  False when Android refused the request (the app must be in front) or no launcher can pin. */
+    public static boolean offer(Context context, File game) {
         try {
             android.appwidget.AppWidgetManager widgets = android.appwidget.AppWidgetManager.getInstance(context);
             android.content.ComponentName provider = new android.content.ComponentName(context, GameWidget.class);
-            if (widgets.getAppWidgetIds(provider).length > 0) { GameWidget.refresh(context); return; }
-            if (widgets.isRequestPinAppWidgetSupported()) { widgets.requestPinAppWidget(provider, null, null); return; }
+            if (widgets.getAppWidgetIds(provider).length > 0) { GameWidget.refresh(context); return true; }
+            if (widgets.isRequestPinAppWidgetSupported() && widgets.requestPinAppWidget(provider, null, null)) return true;
         } catch (Exception failure) {
             Log.w("wwhd-setup", "Game widget not offered: " + failure.getMessage());
         }
         try {
             ShortcutManager shortcuts = context.getSystemService(ShortcutManager.class);
-            if (shortcuts == null || !shortcuts.isRequestPinShortcutSupported()) return;
+            if (shortcuts == null || !shortcuts.isRequestPinShortcutSupported()) return false;
             for (ShortcutInfo pinned : shortcuts.getPinnedShortcuts())
-                if (pinned.getId().equals(ID)) return;
+                if (pinned.getId().equals(ID)) return true;
             Bitmap art = icon(new File(game, "meta/iconTex.tga"));
             Intent play = new Intent(Intent.ACTION_MAIN).setClass(context, WwhdActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -46,9 +47,10 @@ public final class GameShortcut {
                 .setShortLabel(context.getString(R.string.app_name))
                 .setIntent(play);
             if (art != null) info.setIcon(Icon.createWithAdaptiveBitmap(adaptive(art)));
-            shortcuts.requestPinShortcut(info.build(), null);
+            return shortcuts.requestPinShortcut(info.build(), null);
         } catch (Exception failure) {
             Log.w("wwhd-setup", "Game shortcut not offered: " + failure.getMessage());
+            return false;
         }
     }
 

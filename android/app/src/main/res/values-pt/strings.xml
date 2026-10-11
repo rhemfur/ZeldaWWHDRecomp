@@ -59,4 +59,7 @@
     <string name="setup_continue_anyway">Continuar mesmo assim</string>
     <string name="setup_shaders">Preparando os gráficos…</string>
     <string name="setup_shaders_detail">Isso deixa os primeiros minutos de jogo mais suaves. Voltar pula esta etapa.</string>
+    <string name="game_icon_add">Adicionar o ícone do jogo à tela inicial</string>
+    <string name="game_icon_present">O ícone já está na tela inicial. Segure-o e toque em Configurações.</string>
+    <string name="game_icon_none">Instale o jogo primeiro</string>
 </resources>

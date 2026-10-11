@@ -49,4 +49,17 @@
     <string name="setup_continue_anyway">Continuar de todos modos</string>
     <string name="setup_shaders">Preparando los gráficos…</string>
     <string name="setup_shaders_detail">Así los primeros minutos de juego van más fluidos. Atrás omite este paso.</string>
+    <string name="game_icon_add">Añadir el icono del juego a la pantalla de inicio</string>
+    <string name="game_icon_present">El icono ya está en la pantalla de inicio. Mantenlo pulsado y toca Ajustes.</string>
+    <string name="game_icon_none">Primero instala el juego</string>
+    <string name="game_widget">El juego, con su propio icono</string>
+    <string name="save_export">Exportar partida</string>
+    <string name="save_import">Importar partida</string>
+    <string name="save_share">Enviar la partida a…</string>
+    <string name="save_none">Todavía no hay partida guardada</string>
+    <string name="save_exported">Partida exportada a Descargas</string>
+    <string name="save_export_failed">No se pudo exportar la partida: %1$s</string>
+    <string name="save_not_a_save">Este zip no tiene una partida de Wind Waker HD (user/cking.sav)</string>
+    <string name="save_imported">Partida importada (la anterior está en %1$s)</string>
+    <string name="save_import_failed">No se pudo importar la partida: %1$s</string>
 </resources>

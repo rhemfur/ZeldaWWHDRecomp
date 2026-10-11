@@ -31,6 +31,7 @@ public class SetupActivity extends Activity {
     private Button continueAnyway;
     private String continueAction;
     private Button play;
+    private Button addIcon;
     private Button disc;
     private Button common;
     private Button restore;
@@ -60,17 +61,18 @@ public class SetupActivity extends Activity {
 
     private boolean shortcutChecked;
 
-    /** Once per completed build: the home-screen game icon with the game's own picture. */
+    /** Once per completed build: the home-screen game icon with the game's own picture. Android
+     *  refuses the request unless the screen is in front, so it waits for focus and counts as made
+     *  only once accepted. */
     private void offerShortcut() {
-        if (shortcutChecked) return;
+        if (shortcutChecked || !hasWindowFocus()) return;
         shortcutChecked = true;
         if (!phoneSetup) {  // the PC route: its game folder, once
             File external = getExternalFilesDir(null);
             File game = external == null ? null : new File(external, "game");
             android.content.SharedPreferences prefs = getSharedPreferences("setup", MODE_PRIVATE);
             if (game == null || !new File(game, "meta/iconTex.tga").isFile() || prefs.getBoolean("pc_icon_offered", false)) return;
-            prefs.edit().putBoolean("pc_icon_offered", true).apply();
-            GameShortcut.offer(this, game);
+            if (GameShortcut.offer(this, game)) prefs.edit().putBoolean("pc_icon_offered", true).apply();
             return;
         }
         new Thread(() -> {
@@ -79,9 +81,24 @@ public class SetupActivity extends Activity {
             android.content.SharedPreferences prefs = getSharedPreferences("setup", MODE_PRIVATE);
             String generation = selection.library.getName();
             if (generation.equals(prefs.getString("shortcut_offered", ""))) return;
-            prefs.edit().putString("shortcut_offered", generation).apply();
-            runOnUiThread(() -> GameShortcut.offer(this, selection.game));
+            runOnUiThread(() -> {
+                if (GameShortcut.offer(this, selection.game)) prefs.edit().putString("shortcut_offered", generation).apply();
+            });
         }, "wwhd-game-shortcut").start();
+    }
+
+    /** The setup screen's button: the game icon again (refused or removed), or where it is. */
+    private void addIcon() {
+        new Thread(() -> {
+            File game = GameWidget.activeGame(this);
+            boolean placed = android.appwidget.AppWidgetManager.getInstance(this)
+                .getAppWidgetIds(new android.content.ComponentName(this, GameWidget.class)).length > 0;
+            runOnUiThread(() -> {
+                if (game == null) android.widget.Toast.makeText(this, R.string.game_icon_none, android.widget.Toast.LENGTH_SHORT).show();
+                else if (placed) android.widget.Toast.makeText(this, R.string.game_icon_present, android.widget.Toast.LENGTH_LONG).show();
+                else GameShortcut.offer(this, game);
+            });
+        }, "wwhd-game-icon").start();
     }
 
     @Override public void onCreate(Bundle state) {
@@ -128,6 +145,8 @@ public class SetupActivity extends Activity {
         play.setTextSize(20);
         play.setTextColor(0xFFFFFFFF);
         play.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF0D5C8A));
+        // the home-screen game icon again, for players who declined or removed it
+        addIcon = button(layout, getString(R.string.game_icon_add), this::addIcon);
         // one button for the three kinds of dump; the activity results are the same as before
         choose = button(layout, getString(R.string.setup_choose), this::chooseKind);
         pickers.add(choose);
@@ -395,6 +414,7 @@ public class SetupActivity extends Activity {
                 show(resume, phoneSetup && job != null && !working && !hostName.equals("complete"));
                 setTextIfChanged(resume, getString(hostName.equals("selected") ? R.string.setup_start : R.string.setup_continue));
                 plainPhase(job, hostState, hostName, needsKeys, resume.isEnabled());
+                show(addIcon, play.isEnabled() && !working);
                 String text;
                 if (!phoneSetup) {
                     text = "This APK supports the PC build route. Phone setup needs an APK containing Python and the compiler.";
@@ -406,7 +426,7 @@ public class SetupActivity extends Activity {
                     JSONObject value = host.isFile() ? SetupStore.read(host) : new JSONObject().put("state", "ready to start");
                     text = "Setup: " + value.getString("state");
                     if (value.optString("state").equals("complete")) offerShortcut();
-                    if (value.optString("state").equals("warming shaders")) play.setEnabled(false);
+                    if (value.optString("state").equals("warming shaders")) { play.setEnabled(false); addIcon.setEnabled(false); }
                     if (value.optString("state").equals("warming shaders") &&
                         !job.getAbsolutePath().equals(shaderWarmJob)) {
                         shaderWarmJob = job.getAbsolutePath();

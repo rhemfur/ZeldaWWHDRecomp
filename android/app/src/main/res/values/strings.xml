@@ -60,4 +60,7 @@
     <string name="setup_continue_anyway">Continue anyway</string>
     <string name="setup_shaders">Preparing the graphics…</string>
     <string name="setup_shaders_detail">This makes the first minutes of play smoother. Back skips it.</string>
+    <string name="game_icon_add">Add the game icon to the home screen</string>
+    <string name="game_icon_present">The icon is already on the home screen. Hold it, then Settings.</string>
+    <string name="game_icon_none">Set up the game first</string>
 </resources>

@@ -56,6 +56,16 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/game_widget_info" />
         </receiver>
+        <!-- the widget's menu (its long-press "Settings"): export/import the save, setup -->
+        <activity android:name=".GameWidgetMenu"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
         <receiver android:name=".SetupRecoveryReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
