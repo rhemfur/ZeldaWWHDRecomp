@@ -10,4 +10,7 @@
     <string name="save_not_a_save">Este zip não tem save do Wind Waker HD (user/cking.sav)</string>
     <string name="save_imported">Save importado (o anterior está em %1$s)</string>
     <string name="save_import_failed">Não foi possível importar o save: %1$s</string>
+    <string name="game_icon_add">Adicionar o ícone do jogo à tela inicial</string>
+    <string name="game_icon_present">O ícone já está na tela inicial. Segure-o e toque em Configurações.</string>
+    <string name="game_icon_none">Instale o jogo primeiro</string>
 </resources>

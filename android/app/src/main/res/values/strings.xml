@@ -11,4 +11,7 @@
     <string name="save_not_a_save">This zip has no Wind Waker HD save (user/cking.sav)</string>
     <string name="save_imported">Save imported (the previous one is in %1$s)</string>
     <string name="save_import_failed">Could not import the save: %1$s</string>
+    <string name="game_icon_add">Add the game icon to the home screen</string>
+    <string name="game_icon_present">The icon is already on the home screen. Hold it, then Settings.</string>
+    <string name="game_icon_none">Set up the game first</string>
 </resources>

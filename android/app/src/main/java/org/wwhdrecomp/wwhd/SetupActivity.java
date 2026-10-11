@@ -26,6 +26,7 @@ public class SetupActivity extends Activity {
     private Button continueAnyway;
     private String continueAction;
     private Button play;
+    private Button addIcon;
     private Button disc;
     private Button common;
     private Button restore;
@@ -55,17 +56,18 @@ public class SetupActivity extends Activity {
 
     private boolean shortcutChecked;
 
-    /** Once per completed build: the home-screen game icon with the game's own picture. */
+    /** Once per completed build: the home-screen game icon with the game's own picture. Android
+     *  refuses the request unless the screen is in front, so it waits for focus and counts as made
+     *  only once accepted. */
     private void offerShortcut() {
-        if (shortcutChecked) return;
+        if (shortcutChecked || !hasWindowFocus()) return;
         shortcutChecked = true;
         if (!phoneSetup) {  // the PC route: its game folder, once
             File external = getExternalFilesDir(null);
             File game = external == null ? null : new File(external, "game");
             android.content.SharedPreferences prefs = getSharedPreferences("setup", MODE_PRIVATE);
             if (game == null || !new File(game, "meta/iconTex.tga").isFile() || prefs.getBoolean("pc_icon_offered", false)) return;
-            prefs.edit().putBoolean("pc_icon_offered", true).apply();
-            GameShortcut.offer(this, game);
+            if (GameShortcut.offer(this, game)) prefs.edit().putBoolean("pc_icon_offered", true).apply();
             return;
         }
         new Thread(() -> {
@@ -74,9 +76,24 @@ public class SetupActivity extends Activity {
             android.content.SharedPreferences prefs = getSharedPreferences("setup", MODE_PRIVATE);
             String generation = selection.library.getName();
             if (generation.equals(prefs.getString("shortcut_offered", ""))) return;
-            prefs.edit().putString("shortcut_offered", generation).apply();
-            runOnUiThread(() -> GameShortcut.offer(this, selection.game));
+            runOnUiThread(() -> {
+                if (GameShortcut.offer(this, selection.game)) prefs.edit().putString("shortcut_offered", generation).apply();
+            });
         }, "wwhd-game-shortcut").start();
+    }
+
+    /** The setup screen's button: the game icon again (refused or removed), or where it is. */
+    private void addIcon() {
+        new Thread(() -> {
+            File game = GameWidget.activeGame(this);
+            boolean placed = android.appwidget.AppWidgetManager.getInstance(this)
+                .getAppWidgetIds(new android.content.ComponentName(this, GameWidget.class)).length > 0;
+            runOnUiThread(() -> {
+                if (game == null) android.widget.Toast.makeText(this, R.string.game_icon_none, android.widget.Toast.LENGTH_SHORT).show();
+                else if (placed) android.widget.Toast.makeText(this, R.string.game_icon_present, android.widget.Toast.LENGTH_LONG).show();
+                else GameShortcut.offer(this, game);
+            });
+        }, "wwhd-game-icon").start();
     }
 
     @Override public void onCreate(Bundle state) {
@@ -112,6 +129,7 @@ public class SetupActivity extends Activity {
         continueAnyway = button(layout, "Continue anyway", () -> { if (continueAction != null) control(continueAction); });
         continueAnyway.setVisibility(android.view.View.GONE);
         play = button(layout, "Play current build (phone or PC)", () -> startActivity(new Intent(this, WwhdActivity.class)));
+        addIcon = button(layout, getString(R.string.game_icon_add), this::addIcon);
         TextView checkpoints = new TextView(this);
         checkpoints.setText("Setup keeps a private copy of your input. Leave room for that copy, extracted files, compiled output and at least 1 GiB working reserve. Full-game space and time still need phone measurements. Keys are selected as files and kept private.\n\nYou can close this screen while setup runs. Import resumes from verified complete files; an interrupted file copy or extraction restarts. Python and compiler resource preparation pause during unpacking and restart the incomplete stage. Checksum validation and translation respond to pause requests; an interrupted translation restarts. Compilation and linking also respond to pause requests. An interrupted command restarts; verified objects are kept. Saves stay in their current folder.\n\nThe optional PC route still uses the game folder copied over USB.");
         layout.addView(checkpoints);
@@ -269,6 +287,7 @@ public class SetupActivity extends Activity {
                 File external = getExternalFilesDir(null);
                 play.setEnabled(new File(AndroidGame.storage(SetupActivity.this), "active.json").isFile() ||
                     (external != null && new File(external, "game/code/cking.rpx").isFile()));
+                addIcon.setEnabled(play.isEnabled());
                 String text;
                 if (!phoneSetup) {
                     text = "This APK supports the PC build route. Phone setup needs an APK containing Python and the compiler.";
@@ -280,7 +299,7 @@ public class SetupActivity extends Activity {
                     JSONObject value = host.isFile() ? SetupStore.read(host) : new JSONObject().put("state", "ready to start");
                     text = "Setup: " + value.getString("state");
                     if (value.optString("state").equals("complete")) offerShortcut();
-                    if (value.optString("state").equals("warming shaders")) play.setEnabled(false);
+                    if (value.optString("state").equals("warming shaders")) { play.setEnabled(false); addIcon.setEnabled(false); }
                     if (value.optString("state").equals("warming shaders") &&
                         !job.getAbsolutePath().equals(shaderWarmJob)) {
                         shaderWarmJob = job.getAbsolutePath();
